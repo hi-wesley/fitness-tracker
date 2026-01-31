@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Wellness Aggregator — Unified Health Story</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="container">
+      <header class="header">
+        <div>
+          <h1>Wellness Aggregator</h1>
+          <p class="subtitle">
+            Unify sleep, nutrition, activity, and vitals into a single daily story —
+            with correlations and anomaly alerts.
+          </p>
+        </div>
+        <div class="header-meta">
+          <div class="pill" id="tzPill" title="Time zone used for daily rollups">TZ: —</div>
+          <div class="pill" id="statusPill" aria-live="polite">Ready</div>
+        </div>
+      </header>
+
+      <section class="card" aria-labelledby="import-title">
+        <h2 id="import-title">Import data</h2>
+
+        <div class="import-grid">
+          <div class="import-controls">
+            <label class="file-label">
+              <span>Upload JSON</span>
+              <input id="fileInput" type="file" accept="application/json" />
+            </label>
+
+            <div class="button-row">
+              <button id="loadSampleBtn" type="button">Load sample</button>
+              <button id="analyzeBtn" type="button" class="primary">Analyze</button>
+              <button id="clearBtn" type="button" class="secondary">Clear</button>
+            </div>
+
+            <p class="hint">
+              Tip: to load the bundled sample via the button, run a local server (see
+              <span class="mono">README.md</span>). Otherwise, use the file picker.
+            </p>
+          </div>
+
+          <div>
+            <label for="jsonInput">Paste canonical JSON</label>
+            <textarea
+              id="jsonInput"
+              spellcheck="false"
+              placeholder="Paste your JSON here..."
+              rows="14"
+            ></textarea>
+          </div>
+        </div>
+
+        <details class="schema">
+          <summary>Canonical JSON schema (minimal)</summary>
+          <pre><code>{
+  "schemaVersion": 1,
+  "user": { "id": "demo", "tz": "America/New_York" },
+  "records": [
+    {
+      "type": "sleep_session",
+      "start": "2026-01-11T23:05:00-05:00",
+      "end": "2026-01-12T06:30:00-05:00",
+      "data": { "quality": 0.78 },
+      "source": "WearableCo"
+    },
+    {
+      "type": "nutrition",
+      "timestamp": "2026-01-12T20:00:00-05:00",
+      "data": { "calories": 2150, "protein_g": 125, "sugar_g": 34 },
+      "source": "FoodLog"
+    }
+  ]
+}</code></pre>
+        </details>
+
+        <div id="errors" class="errors" role="alert"></div>
+      </section>
+
+      <section class="grid" aria-label="Overview">
+        <div class="card mini">
+          <h3>Date range</h3>
+          <div id="rangeValue" class="big">—</div>
+          <div id="daysValue" class="muted">—</div>
+        </div>
+        <div class="card mini">
+          <h3>Records</h3>
+          <div id="recordsValue" class="big">—</div>
+          <div id="sourcesValue" class="muted">—</div>
+        </div>
+        <div class="card mini">
+          <h3>Coverage</h3>
+          <div id="coverageValue" class="big">—</div>
+          <div class="muted">Days with data per metric</div>
+        </div>
+        <div class="card mini">
+          <h3>Top story</h3>
+          <div id="topStoryValue" class="big">—</div>
+          <div class="muted">Based on detected patterns</div>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="story-title">
+        <h2 id="story-title">Unified health story</h2>
+        <div id="storyList" class="story"></div>
+      </section>
+
+      <section class="card" aria-labelledby="dashboard-title">
+        <div class="card-header">
+          <h2 id="dashboard-title">Dashboard</h2>
+          <div class="muted">Hover charts for details</div>
+        </div>
+
+        <div class="chart-grid">
+          <div class="chart-card">
+            <div class="chart-title">Sleep (hours)</div>
+            <canvas id="chartSleep"></canvas>
+          </div>
+          <div class="chart-card">
+            <div class="chart-title">Sugar (g)</div>
+            <canvas id="chartSugar"></canvas>
+          </div>
+          <div class="chart-card">
+            <div class="chart-title">Training load</div>
+            <canvas id="chartLoad"></canvas>
+          </div>
+          <div class="chart-card">
+            <div class="chart-title">Resting HR (bpm)</div>
+            <canvas id="chartRhr"></canvas>
+          </div>
+          <div class="chart-card">
+            <div class="chart-title">Weight (kg)</div>
+            <canvas id="chartWeight"></canvas>
+          </div>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="insights-title">
+        <h2 id="insights-title">Insights</h2>
+        <div id="insightFeed" class="insights"></div>
+        <p class="disclaimer">
+          This is a demo and not medical advice. For health concerns, consult a qualified
+          professional.
+        </p>
+      </section>
+
+      <section class="card" aria-labelledby="correlations-title">
+        <h2 id="correlations-title">Correlation discovery</h2>
+        <div id="correlationTables"></div>
+      </section>
+
+      <footer class="footer">
+        <div class="muted">
+          Prototype: local-only analysis. No accounts, no data leaves your browser.
+        </div>
+      </footer>
+    </div>
+
+    <div id="tooltip" class="tooltip" hidden></div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
