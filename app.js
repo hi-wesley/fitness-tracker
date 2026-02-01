@@ -33,6 +33,7 @@
     jsonInput: document.getElementById("jsonInput"),
     loadSampleBtn: document.getElementById("loadSampleBtn"),
     analyzeBtn: document.getElementById("analyzeBtn"),
+    regenerateBtn: document.getElementById("regenerateBtn"),
     clearBtn: document.getElementById("clearBtn"),
     errors: document.getElementById("errors"),
     focusRange: document.getElementById("focusRange"),
@@ -98,6 +99,7 @@
 
   const APP_TZ = "America/Los_Angeles";
   const DEFAULT_TZ = APP_TZ;
+  const INSIGHTS_ANALYSIS_VERSION = 2;
   dom.helloPill.textContent = "Hello, there";
 
   let themeColors = null;
@@ -1476,6 +1478,27 @@
     return null;
   }
 
+  function computeAbsoluteStressPenalty(value, direction, absolute) {
+    if (!isFiniteNumber(value) || !isPlainObject(absolute)) return null;
+    const threshold = toNumber(absolute.threshold);
+    const full = toNumber(absolute.full);
+    if (!isFiniteNumber(threshold) || !isFiniteNumber(full)) return null;
+
+    if (direction === "lower_worse") {
+      const span = threshold - full;
+      if (span <= 0) return null;
+      if (value >= threshold) return 0;
+      return clamp01((threshold - value) / span);
+    }
+    if (direction === "higher_worse") {
+      const span = full - threshold;
+      if (span <= 0) return null;
+      if (value <= threshold) return 0;
+      return clamp01((value - threshold) / span);
+    }
+    return null;
+  }
+
   function labelStressScore(score) {
     if (!isFiniteNumber(score)) return null;
     if (score <= CONFIG.stressLowMax) return "Low";
@@ -1503,6 +1526,7 @@
       digits: 1,
       direction: "lower_worse",
       weight: 0.4,
+      absolute: { threshold: 6.5, full: 4.5 },
     },
     {
       key: "rhr_bpm",
@@ -1511,6 +1535,7 @@
       digits: 0,
       direction: "higher_worse",
       weight: 0.4,
+      absolute: { threshold: 60, full: 78 },
     },
     {
       key: "workout_load",
@@ -1519,6 +1544,7 @@
       digits: 0,
       direction: "higher_worse",
       weight: 0.2,
+      absolute: { threshold: 110, full: 220 },
     },
   ]);
 
@@ -1562,10 +1588,16 @@
         continue;
       }
 
-      usedWeight += input.weight;
-      weightedPenalty += input.weight * penalty.penalty;
+      const absolutePenalty = computeAbsoluteStressPenalty(value, input.direction, input.absolute);
+      const mergedPenalty =
+        isFiniteNumber(absolutePenalty) && absolutePenalty > penalty.penalty
+          ? { ...penalty, penalty: absolutePenalty, method: `${penalty.method}+abs` }
+          : penalty;
 
-      const diffLabel = `${formatSigned(penalty.diff, input.digits)} ${input.unit}`;
+      usedWeight += input.weight;
+      weightedPenalty += input.weight * mergedPenalty.penalty;
+
+      const diffLabel = `${formatSigned(mergedPenalty.diff, input.digits)} ${input.unit}`;
       rows.push({
         label: input.label,
         value:
@@ -2061,16 +2093,56 @@
     if (bodyEl) bodyEl.textContent = body;
   }
 
+  function toToneScore(value) {
+    const num = toNumber(value);
+    if (num === null) return null;
+    return clamp(Math.round(num), 0, 100);
+  }
+
   function normalizeInsightBlock(value) {
     if (!isPlainObject(value)) return null;
     const title = typeof value.title === "string" ? value.title.trim() : "";
     const body = typeof value.body === "string" ? value.body.trim() : "";
     if (!title || !body) return null;
-    return { title, body };
+    const toneScore = toToneScore(value.toneScore ?? value.score);
+    const toneDayKey = typeof value.toneDayKey === "string" ? value.toneDayKey.trim() : "";
+    return { title, body, toneScore, toneDayKey: toneDayKey || null };
   }
 
-  function renderAiInsights(insights) {
-    if (!isPlainObject(insights)) return false;
+  function setInsightTone(cardEl, toneScore) {
+    if (!cardEl) return;
+    if (!isFiniteNumber(toneScore)) {
+      cardEl.removeAttribute("data-tone");
+      cardEl.style.removeProperty("--tone-hue");
+      return;
+    }
+    const score = clamp(toneScore, 0, 100);
+    const hue = (score / 100) * 120;
+    cardEl.setAttribute("data-tone", "1");
+    cardEl.style.setProperty("--tone-hue", String(Math.round(hue)));
+  }
+
+  function showInsightsGenerating(dayKey) {
+    const placeholderTitle = "Generating…";
+    const placeholderBody = `Generating AI insights for ${dayKey}…`;
+    setInsightText(dom.insights.overallTitle, dom.insights.overallBody, placeholderTitle, placeholderBody);
+    setInsightText(dom.insights.sleepTitle, dom.insights.sleepBody, placeholderTitle, placeholderBody);
+    setInsightText(dom.insights.stressTitle, dom.insights.stressBody, placeholderTitle, placeholderBody);
+    setInsightText(dom.insights.exerciseTitle, dom.insights.exerciseBody, placeholderTitle, placeholderBody);
+    setInsightText(dom.insights.nutritionTitle, dom.insights.nutritionBody, placeholderTitle, placeholderBody);
+    setInsightText(dom.insights.bpTitle, dom.insights.bpBody, placeholderTitle, placeholderBody);
+    setInsightText(dom.insights.weightTitle, dom.insights.weightBody, placeholderTitle, placeholderBody);
+    setInsightTone(dom.insights.overallTitle?.closest?.(".insight"), null);
+    setInsightTone(dom.insights.sleepTitle?.closest?.(".insight"), null);
+    setInsightTone(dom.insights.stressTitle?.closest?.(".insight"), null);
+    setInsightTone(dom.insights.exerciseTitle?.closest?.(".insight"), null);
+    setInsightTone(dom.insights.nutritionTitle?.closest?.(".insight"), null);
+    setInsightTone(dom.insights.bpTitle?.closest?.(".insight"), null);
+    setInsightTone(dom.insights.weightTitle?.closest?.(".insight"), null);
+  }
+
+  function renderAiInsights(insights, { expectedDayKey = null, analysisOk = true } = {}) {
+    if (!isPlainObject(insights)) return { ok: false, hasTone: false };
 
     const overall = normalizeInsightBlock(insights.overall);
     const sleep = normalizeInsightBlock(insights.sleep);
@@ -2080,25 +2152,290 @@
     const bp = normalizeInsightBlock(insights.bp);
     const weight = normalizeInsightBlock(insights.weight);
 
-    if (overall) setInsightText(dom.insights.overallTitle, dom.insights.overallBody, overall.title, overall.body);
-    if (sleep) setInsightText(dom.insights.sleepTitle, dom.insights.sleepBody, sleep.title, sleep.body);
-    if (stress) setInsightText(dom.insights.stressTitle, dom.insights.stressBody, stress.title, stress.body);
-    if (exercise) setInsightText(dom.insights.exerciseTitle, dom.insights.exerciseBody, exercise.title, exercise.body);
-    if (nutrition) setInsightText(dom.insights.nutritionTitle, dom.insights.nutritionBody, nutrition.title, nutrition.body);
-    if (bp) setInsightText(dom.insights.bpTitle, dom.insights.bpBody, bp.title, bp.body);
-    if (weight) setInsightText(dom.insights.weightTitle, dom.insights.weightBody, weight.title, weight.body);
+    const ok = Boolean(overall && sleep && stress && exercise && nutrition && bp && weight);
+    const expected =
+      typeof expectedDayKey === "string" && expectedDayKey.trim() ? expectedDayKey.trim() : null;
+    const canUseTone = ok && analysisOk === true && Boolean(expected);
+    const blockHasTone = (block) =>
+      Boolean(
+        canUseTone &&
+          block &&
+          isFiniteNumber(block.toneScore) &&
+          typeof block.toneDayKey === "string" &&
+          block.toneDayKey === expected
+      );
+    const hasTone =
+      ok &&
+      [overall, sleep, stress, exercise, nutrition, bp, weight].every((block) =>
+        blockHasTone(block)
+      );
 
-    return Boolean(overall && sleep && stress && exercise && nutrition && bp && weight);
+    if (overall) {
+      setInsightText(dom.insights.overallTitle, dom.insights.overallBody, overall.title, overall.body);
+      setInsightTone(
+        dom.insights.overallTitle?.closest?.(".insight"),
+        blockHasTone(overall) ? overall.toneScore : null
+      );
+    }
+    if (sleep) {
+      setInsightText(dom.insights.sleepTitle, dom.insights.sleepBody, sleep.title, sleep.body);
+      setInsightTone(dom.insights.sleepTitle?.closest?.(".insight"), blockHasTone(sleep) ? sleep.toneScore : null);
+    }
+    if (stress) {
+      setInsightText(dom.insights.stressTitle, dom.insights.stressBody, stress.title, stress.body);
+      setInsightTone(dom.insights.stressTitle?.closest?.(".insight"), blockHasTone(stress) ? stress.toneScore : null);
+    }
+    if (exercise) {
+      setInsightText(dom.insights.exerciseTitle, dom.insights.exerciseBody, exercise.title, exercise.body);
+      setInsightTone(
+        dom.insights.exerciseTitle?.closest?.(".insight"),
+        blockHasTone(exercise) ? exercise.toneScore : null
+      );
+    }
+    if (nutrition) {
+      setInsightText(dom.insights.nutritionTitle, dom.insights.nutritionBody, nutrition.title, nutrition.body);
+      setInsightTone(
+        dom.insights.nutritionTitle?.closest?.(".insight"),
+        blockHasTone(nutrition) ? nutrition.toneScore : null
+      );
+    }
+    if (bp) {
+      setInsightText(dom.insights.bpTitle, dom.insights.bpBody, bp.title, bp.body);
+      setInsightTone(dom.insights.bpTitle?.closest?.(".insight"), blockHasTone(bp) ? bp.toneScore : null);
+    }
+    if (weight) {
+      setInsightText(dom.insights.weightTitle, dom.insights.weightBody, weight.title, weight.body);
+      setInsightTone(dom.insights.weightTitle?.closest?.(".insight"), blockHasTone(weight) ? weight.toneScore : null);
+    }
+
+    return { ok, hasTone };
   }
 
-  async function ensureAiInsights(profileId, dayKey, model) {
+  function clampToneScore(value) {
+    const score = toToneScore(value);
+    return isFiniteNumber(score) ? clamp(score, 0, 100) : null;
+  }
+
+  function scoreSleepTone(dayByKey, dayKey) {
+    const window = windowDays(dayByKey, dayKey, 7);
+    const values = window.map((d) => d.sleep_hours).filter(isFiniteNumber);
+    if (values.length === 0) return null;
+
+    const avgSleep = avg(values);
+    if (!isFiniteNumber(avgSleep)) return null;
+
+    let score =
+      avgSleep >= 7.6
+        ? 88
+        : avgSleep >= 7.0
+          ? 78
+          : avgSleep >= 6.5
+            ? 68
+            : avgSleep >= 6.0
+              ? 55
+              : avgSleep >= 5.5
+                ? 40
+                : 25;
+
+    const shortCount = window.reduce((acc, d) => {
+      const v = d.sleep_hours;
+      return acc + (isFiniteNumber(v) && v < 6 ? 1 : 0);
+    }, 0);
+    if (shortCount >= 3) score -= 10;
+    if (shortCount >= 5) score -= 8;
+
+    return clampToneScore(score);
+  }
+
+  function scoreStressTone(dayByKey, dayKey) {
+    const prevDayKey = addDaysToKey(dayKey, -1);
+    const stress = computeStressForDay(dayByKey, prevDayKey);
+    return clampToneScore(stress?.score ?? null);
+  }
+
+  function scoreExerciseTone(dayByKey, dayKey) {
+    const window = windowDays(dayByKey, dayKey, 7);
+    const mins = window.map((d) => d.workout_minutes).filter(isFiniteNumber);
+    if (mins.length === 0) return null;
+    const total = sum(mins);
+
+    const score =
+      total >= 210
+        ? 88
+        : total >= 150
+          ? 78
+          : total >= 90
+            ? 62
+            : total >= 45
+              ? 48
+              : total > 0
+                ? 32
+                : 20;
+    return clampToneScore(score);
+  }
+
+  function scoreNutritionTone(profileId, dayByKey, dayKey) {
+    const day = dayByKey.get(dayKey) ?? null;
+    const calories = day && isFiniteNumber(day.calories) ? day.calories : null;
+    const protein = day && isFiniteNumber(day.protein_g) ? day.protein_g : null;
+    const sugar = day && isFiniteNumber(day.sugar_g) ? day.sugar_g : null;
+    if (calories === null && protein === null && sugar === null) return null;
+
+    let score = 74;
+
+    if (isFiniteNumber(protein)) {
+      if (protein < 45) score -= 55;
+      else if (protein < 60) score -= 42;
+      else if (protein < 80) score -= 28;
+      else if (protein < 110) score -= 14;
+      else score += 6;
+    } else {
+      score -= 10;
+    }
+
+    if (isFiniteNumber(sugar)) {
+      if (sugar > 90) score -= 28;
+      else if (sugar > 70) score -= 18;
+      else if (sugar > 55) score -= 10;
+      else if (sugar > 40) score -= 6;
+    }
+
+    if (isFiniteNumber(calories)) {
+      if (profileId === "weightloss-wally") {
+        if (calories > 3000) score -= 32;
+        else if (calories > 2700) score -= 22;
+        else if (calories > 2450) score -= 14;
+        else if (calories < 1700) score -= 10;
+      } else if (profileId === "athlete-anna") {
+        if (calories < 2300) score -= 10;
+      } else {
+        if (calories > 3400) score -= 12;
+        else if (calories < 1600) score -= 12;
+      }
+    }
+
+    if (profileId === "athlete-anna" && isFiniteNumber(calories) && isFiniteNumber(protein) && calories > 0) {
+      const proteinPct = (protein * 4) / calories;
+      if (proteinPct >= 0.27) score += 10;
+      else if (proteinPct >= 0.23) score += 6;
+      else if (proteinPct < 0.17) score -= 14;
+      else if (proteinPct < 0.14) score -= 26;
+    }
+
+    if (profileId === "protein-paul" && isFiniteNumber(protein)) {
+      if (protein < 55) score -= 14;
+      if (protein < 45) score -= 10;
+    }
+
+    return clampToneScore(score);
+  }
+
+  function scoreBpTone(dayByKey, dayKey) {
+    const window = windowDays(dayByKey, dayKey, 30);
+    const latest = latestBpReading(window);
+    if (!latest) return null;
+    const sys = latest.systolic;
+    const dia = latest.diastolic;
+
+    let score = 80;
+    if (sys >= 160 || dia >= 100) score = 18;
+    else if (sys >= 140 || dia >= 90) score = 35;
+    else if (sys >= 130 || dia >= 80) score = 55;
+    else if (sys >= 120 && dia < 80) score = 72;
+    else score = 86;
+
+    return clampToneScore(score);
+  }
+
+  function scoreWeightTone(profileId, dayByKey, dayKey) {
+    const window = windowDays(dayByKey, dayKey, 30);
+    const first = firstNumberInDays(window, "weight_kg");
+    const latest = latestNumberInDays(window, "weight_kg");
+    if (!first || !latest || !isFiniteNumber(first.value) || !isFiniteNumber(latest.value)) return null;
+
+    const deltaLb = kgToLb(latest.value) - kgToLb(first.value);
+    let score = 75;
+
+    if (profileId === "weightloss-wally") {
+      score = deltaLb <= -2.5 ? 86 : deltaLb <= -1.0 ? 76 : deltaLb <= 0.5 ? 64 : 48;
+    } else {
+      const abs = Math.abs(deltaLb);
+      score = abs < 2 ? 80 : abs < 4 ? 68 : abs < 7 ? 54 : 40;
+    }
+
+    return clampToneScore(score);
+  }
+
+  function computeLocalToneScores(profileId, dayKey, model) {
+    const days = Array.isArray(model?.days) ? model.days : [];
+    const dayByKey = new Map(days.map((d) => [d.dayKey, d]));
+
+    const sleep = scoreSleepTone(dayByKey, dayKey);
+    const stress = scoreStressTone(dayByKey, dayKey);
+    const exercise = scoreExerciseTone(dayByKey, dayKey);
+    const nutrition = scoreNutritionTone(profileId, dayByKey, dayKey);
+    const bp = scoreBpTone(dayByKey, dayKey);
+    const weight = scoreWeightTone(profileId, dayByKey, dayKey);
+
+    const components = [sleep, stress, exercise, nutrition, bp, weight].filter(isFiniteNumber);
+    const overall = components.length > 0 ? clampToneScore(avg(components)) : null;
+
+    return { overall, sleep, stress, exercise, nutrition, bp, weight };
+  }
+
+  function applyLocalToneScores(profileId, dayKey, model, insights) {
+    if (!isPlainObject(insights)) return insights;
+    const scores = computeLocalToneScores(profileId, dayKey, model);
+    const withTone = (block, score) => {
+      if (!isPlainObject(block)) return block;
+      if (!isFiniteNumber(score)) return { ...block, toneScore: null, toneDayKey: null };
+      return { ...block, toneScore: score, toneDayKey: dayKey };
+    };
+
+    return {
+      overall: withTone(insights.overall, scores.overall),
+      sleep: withTone(insights.sleep, scores.sleep),
+      stress: withTone(insights.stress, scores.stress),
+      exercise: withTone(insights.exercise, scores.exercise),
+      nutrition: withTone(insights.nutrition, scores.nutrition),
+      bp: withTone(insights.bp, scores.bp),
+      weight: withTone(insights.weight, scores.weight),
+    };
+  }
+
+  function isCurrentInsightsAnalysisVersion(value) {
+    const num = toNumber(value);
+    return Number.isFinite(num) && num === INSIGHTS_ANALYSIS_VERSION;
+  }
+
+  async function ensureAiInsights(profileId, dayKey, model, options = {}) {
+    const force = isPlainObject(options) && options.force === true;
     const requestKey = `${profileId}:${dayKey}`;
-    const existing = insightRequestInFlight.get(requestKey);
-    if (existing) return existing;
+    if (!force) {
+      const existing = insightRequestInFlight.get(requestKey);
+      if (existing) return existing;
+    } else {
+      const controller = insightRequestControllers.get(requestKey);
+      if (controller) controller.abort();
+      insightRequestInFlight.delete(requestKey);
+    }
+
+    const seq = (insightRequestSeq.get(requestKey) ?? 0) + 1;
+    insightRequestSeq.set(requestKey, seq);
+    const controller = new AbortController();
+    insightRequestControllers.set(requestKey, controller);
 
     const promise = (async () => {
-      const cached = getCachedInsights(profileId, dayKey);
-      if (cached && renderAiInsights(cached.insights)) return;
+      if (!force) {
+        const cached = getCachedInsights(profileId, dayKey);
+        if (cached) {
+          const rendered = renderAiInsights(cached.insights, {
+            expectedDayKey: dayKey,
+            analysisOk: isCurrentInsightsAnalysisVersion(cached.analysisVersion),
+          });
+          if (rendered.ok && rendered.hasTone) return;
+        }
+      }
 
       const profile = SAMPLE_PROFILES[profileId] ?? null;
       const profileName = profile?.name ?? (typeof model?.userName === "string" ? model.userName : profileId);
@@ -2107,6 +2444,7 @@
       const res = await fetch("/insights", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
         body: JSON.stringify({
           profileId,
           profileName,
@@ -2127,10 +2465,32 @@
       }
       if (!isPlainObject(data.insights)) throw new Error("Backend returned invalid insights");
 
-      putCachedInsights(profileId, dayKey, { model: data.model, insights: data.insights });
-      renderAiInsights(data.insights);
-    })().finally(() => {
-      insightRequestInFlight.delete(requestKey);
+      const latestSeq = insightRequestSeq.get(requestKey) ?? 0;
+      if (seq !== latestSeq) return;
+      if (insightRequestControllers.get(requestKey) !== controller) return;
+
+      const scoredInsights = applyLocalToneScores(profileId, dayKey, model, data.insights);
+
+      putCachedInsights(profileId, dayKey, {
+        model: data.model,
+        analysisVersion: INSIGHTS_ANALYSIS_VERSION,
+        insights: scoredInsights,
+      });
+      if (activeInsightsViewKey === requestKey) {
+        renderAiInsights(scoredInsights, { expectedDayKey: dayKey, analysisOk: true });
+      }
+    })()
+      .catch((err) => {
+        if (err && typeof err === "object" && err.name === "AbortError") return;
+        throw err;
+      })
+      .finally(() => {
+      if (insightRequestInFlight.get(requestKey) === promise) {
+        insightRequestInFlight.delete(requestKey);
+      }
+      if (insightRequestControllers.get(requestKey) === controller) {
+        insightRequestControllers.delete(requestKey);
+      }
     });
 
     insightRequestInFlight.set(requestKey, promise);
@@ -2138,6 +2498,7 @@
   }
 
   function renderInsights(model) {
+    activeInsightsViewKey = null;
     const hasData = isPlainObject(model) && Array.isArray(model.days) && model.days.length > 0;
     const maxDayKey = hasData && typeof model.maxDayKey === "string" ? model.maxDayKey : null;
     const asOf = maxDayKey ? formatDayLong(maxDayKey) : null;
@@ -2150,35 +2511,62 @@
       setInsightText(dom.insights.nutritionTitle, dom.insights.nutritionBody, "—", "—");
       setInsightText(dom.insights.bpTitle, dom.insights.bpBody, "—", "—");
       setInsightText(dom.insights.weightTitle, dom.insights.weightBody, "—", "—");
+      setInsightTone(dom.insights.overallTitle?.closest?.(".insight"), null);
+      setInsightTone(dom.insights.sleepTitle?.closest?.(".insight"), null);
+      setInsightTone(dom.insights.stressTitle?.closest?.(".insight"), null);
+      setInsightTone(dom.insights.exerciseTitle?.closest?.(".insight"), null);
+      setInsightTone(dom.insights.nutritionTitle?.closest?.(".insight"), null);
+      setInsightTone(dom.insights.bpTitle?.closest?.(".insight"), null);
+      setInsightTone(dom.insights.weightTitle?.closest?.(".insight"), null);
       return;
     }
 
     const todayKey = getTodayKey();
     const profileId = typeof model.userId === "string" && model.userId ? model.userId : null;
     const isSample = Boolean(profileId && profileId in SAMPLE_PROFILES);
+    if (isSample && profileId) activeInsightsViewKey = `${profileId}:${todayKey}`;
 
+    let hasUsableCached = false;
+    let cachedHasTone = false;
     if (isSample) {
       const cached = getCachedInsights(profileId, todayKey);
-      if (cached && renderAiInsights(cached.insights)) return;
+      if (cached) {
+        const rendered = renderAiInsights(cached.insights, {
+          expectedDayKey: todayKey,
+          analysisOk: isCurrentInsightsAnalysisVersion(cached.analysisVersion),
+        });
+        hasUsableCached = rendered.ok;
+        cachedHasTone = rendered.ok && rendered.hasTone;
+        if (cachedHasTone) return;
+      }
     }
 
-    const placeholderTitle = isSample ? "Generating…" : "Not generated yet";
-    const placeholderBody = isSample
-      ? `Generating AI insights for ${todayKey}…`
-      : "Start the backend to generate AI insights.";
+    if (!hasUsableCached) {
+      const placeholderTitle = isSample ? "Generating…" : "Not generated yet";
+      const placeholderBody = isSample
+        ? `Generating AI insights for ${todayKey}…`
+        : "Start the backend to generate AI insights.";
 
-    setInsightText(
-      dom.insights.overallTitle,
-      dom.insights.overallBody,
-      placeholderTitle,
-      asOf ? `As of ${asOf}, ${placeholderBody}` : placeholderBody
-    );
-    setInsightText(dom.insights.sleepTitle, dom.insights.sleepBody, placeholderTitle, placeholderBody);
-    setInsightText(dom.insights.stressTitle, dom.insights.stressBody, placeholderTitle, placeholderBody);
-    setInsightText(dom.insights.exerciseTitle, dom.insights.exerciseBody, placeholderTitle, placeholderBody);
-    setInsightText(dom.insights.nutritionTitle, dom.insights.nutritionBody, placeholderTitle, placeholderBody);
-    setInsightText(dom.insights.bpTitle, dom.insights.bpBody, placeholderTitle, placeholderBody);
-    setInsightText(dom.insights.weightTitle, dom.insights.weightBody, placeholderTitle, placeholderBody);
+      setInsightText(
+        dom.insights.overallTitle,
+        dom.insights.overallBody,
+        placeholderTitle,
+        asOf ? `As of ${asOf}, ${placeholderBody}` : placeholderBody
+      );
+      setInsightText(dom.insights.sleepTitle, dom.insights.sleepBody, placeholderTitle, placeholderBody);
+      setInsightText(dom.insights.stressTitle, dom.insights.stressBody, placeholderTitle, placeholderBody);
+      setInsightText(dom.insights.exerciseTitle, dom.insights.exerciseBody, placeholderTitle, placeholderBody);
+      setInsightText(dom.insights.nutritionTitle, dom.insights.nutritionBody, placeholderTitle, placeholderBody);
+      setInsightText(dom.insights.bpTitle, dom.insights.bpBody, placeholderTitle, placeholderBody);
+      setInsightText(dom.insights.weightTitle, dom.insights.weightBody, placeholderTitle, placeholderBody);
+      setInsightTone(dom.insights.overallTitle?.closest?.(".insight"), null);
+      setInsightTone(dom.insights.sleepTitle?.closest?.(".insight"), null);
+      setInsightTone(dom.insights.stressTitle?.closest?.(".insight"), null);
+      setInsightTone(dom.insights.exerciseTitle?.closest?.(".insight"), null);
+      setInsightTone(dom.insights.nutritionTitle?.closest?.(".insight"), null);
+      setInsightTone(dom.insights.bpTitle?.closest?.(".insight"), null);
+      setInsightTone(dom.insights.weightTitle?.closest?.(".insight"), null);
+    }
 
     if (!isSample) return;
     if (window.location.protocol === "file:") return;
@@ -2194,6 +2582,7 @@
     }
 
     void ensureAiInsights(profileId, todayKey, model).catch((err) => {
+      if (hasUsableCached) return;
       const message = String(err?.message || err || "Could not generate AI insights.");
       setInsightText(dom.insights.overallTitle, dom.insights.overallBody, "AI insights unavailable", message);
       setInsightText(dom.insights.sleepTitle, dom.insights.sleepBody, "AI insights unavailable", "—");
@@ -2203,6 +2592,34 @@
       setInsightText(dom.insights.bpTitle, dom.insights.bpBody, "AI insights unavailable", "—");
       setInsightText(dom.insights.weightTitle, dom.insights.weightBody, "AI insights unavailable", "—");
     });
+  }
+
+  async function regenerateAiInsightsForCurrentDay() {
+    if (!currentModel) return;
+    const profileId =
+      typeof currentModel.userId === "string" && currentModel.userId.trim()
+        ? currentModel.userId.trim()
+        : null;
+    if (!profileId) return;
+
+    const todayKey = getTodayKey();
+    activeInsightsViewKey = `${profileId}:${todayKey}`;
+    clearCachedInsights(profileId, todayKey);
+    showInsightsGenerating(todayKey);
+
+    if (window.location.protocol === "file:") return;
+    try {
+      await ensureAiInsights(profileId, todayKey, currentModel, { force: true });
+    } catch (err) {
+      const message = String(err?.message || err || "Could not regenerate AI insights.");
+      setInsightText(dom.insights.overallTitle, dom.insights.overallBody, "AI insights unavailable", message);
+      setInsightText(dom.insights.sleepTitle, dom.insights.sleepBody, "AI insights unavailable", "—");
+      setInsightText(dom.insights.stressTitle, dom.insights.stressBody, "AI insights unavailable", "—");
+      setInsightText(dom.insights.exerciseTitle, dom.insights.exerciseBody, "AI insights unavailable", "—");
+      setInsightText(dom.insights.nutritionTitle, dom.insights.nutritionBody, "AI insights unavailable", "—");
+      setInsightText(dom.insights.bpTitle, dom.insights.bpBody, "AI insights unavailable", "—");
+      setInsightText(dom.insights.weightTitle, dom.insights.weightBody, "AI insights unavailable", "—");
+    }
   }
 
   class MiniChart {
@@ -2877,6 +3294,7 @@
   }
 
   const SAMPLE_PROFILE_DEFAULT = "baseline-barry";
+  const SAMPLE_PROFILE_VERSION = 2;
   let activeSampleProfile = SAMPLE_PROFILE_DEFAULT;
 
   const SAMPLE_PROFILES = Object.freeze({
@@ -3004,12 +3422,12 @@
         time: { hour: 7, minute: 40 },
       },
       nutrition: {
-        caloriesStart: 2250,
-        caloriesEnd: 2125,
-        sdCalories: 140,
-        weekendDelta: 220,
-        minCalories: 1600,
-        maxCalories: 3200,
+        caloriesStart: 2750,
+        caloriesEnd: 2550,
+        sdCalories: 200,
+        weekendDelta: 450,
+        minCalories: 1800,
+        maxCalories: 4200,
         proteinStart: 160,
         proteinEnd: 155,
         sdProtein: 12,
@@ -3104,11 +3522,11 @@
         weekendDelta: 160,
         minCalories: 1900,
         maxCalories: 3600,
-        proteinStart: 120,
-        proteinEnd: 180,
-        sdProtein: 10,
-        minProtein: 90,
-        maxProtein: 240,
+        proteinStart: 180,
+        proteinEnd: 210,
+        sdProtein: 12,
+        minProtein: 120,
+        maxProtein: 300,
         fatStart: 78,
         fatEnd: 85,
         sdFat: 9,
@@ -3172,23 +3590,23 @@
         weight: "Smart Scale",
       },
       sleep: {
-        meanStart: 7.3,
-        meanEnd: 7.4,
-        sdHours: 0.45,
-        weekendDelta: 0.55,
-        minHours: 5.6,
-        maxHours: 9.3,
+        meanStart: 6.4,
+        meanEnd: 6.7,
+        sdHours: 0.6,
+        weekendDelta: 0.65,
+        minHours: 4.6,
+        maxHours: 8.6,
         wakeWeekday: { hour: 7, minute: 0 },
         wakeWeekend: { hour: 8, minute: 10 },
         wakeJitterMin: 18,
         respirationBase: 15.0,
       },
       rhr: {
-        baseStart: 59,
-        baseEnd: 59,
-        sd: 1.4,
-        poorSleepBpmDelta: 2.0,
-        prevLoadBpmPerHour: 0.9,
+        baseStart: 64,
+        baseEnd: 63,
+        sd: 1.2,
+        poorSleepBpmDelta: 3.4,
+        prevLoadBpmPerHour: 1.3,
         time: { hour: 8, minute: 5 },
       },
       nutrition: {
@@ -3198,11 +3616,11 @@
         weekendDelta: 150,
         minCalories: 1600,
         maxCalories: 3100,
-        proteinStart: 55,
-        proteinEnd: 65,
-        sdProtein: 8,
-        minProtein: 30,
-        maxProtein: 140,
+        proteinStart: 45,
+        proteinEnd: 55,
+        sdProtein: 10,
+        minProtein: 25,
+        maxProtein: 120,
         fatStart: 82,
         fatEnd: 80,
         sdFat: 10,
@@ -3244,12 +3662,12 @@
       exercise: {
         weekdays: [2, 4], // Tue/Thu
         activities: ["Yoga", "Walk", "Bike"],
-        durationStart: 30,
-        durationEnd: 40,
+        durationStart: 40,
+        durationEnd: 55,
         sdMinutes: 8,
-        caloriesPerMin: 5.8,
-        easyPct: 0.5,
-        hardPct: 0.05,
+        caloriesPerMin: 6.6,
+        easyPct: 0.35,
+        hardPct: 0.18,
         maxWorkoutsPerDay: 1,
         startHour: 17,
         startMinute: 50,
@@ -3266,23 +3684,23 @@
         weight: "Smart Scale",
       },
       sleep: {
-        meanStart: 6.6,
-        meanEnd: 7.2,
-        sdHours: 0.55,
-        weekendDelta: 0.6,
-        minHours: 5.1,
-        maxHours: 9.2,
+        meanStart: 6.2,
+        meanEnd: 6.6,
+        sdHours: 0.65,
+        weekendDelta: 0.75,
+        minHours: 4.5,
+        maxHours: 8.8,
         wakeWeekday: { hour: 6, minute: 25 },
         wakeWeekend: { hour: 7, minute: 45 },
         wakeJitterMin: 18,
         respirationBase: 16.0,
       },
       rhr: {
-        baseStart: 62,
-        baseEnd: 58,
-        sd: 1.7,
-        poorSleepBpmDelta: 2.8,
-        prevLoadBpmPerHour: 1.0,
+        baseStart: 66,
+        baseEnd: 64,
+        sd: 1.4,
+        poorSleepBpmDelta: 3.8,
+        prevLoadBpmPerHour: 1.3,
         time: { hour: 7, minute: 35 },
       },
       nutrition: {
@@ -3310,21 +3728,21 @@
         time: { hour: 18, minute: 55 },
       },
       bp: {
-        sysStart: 145,
-        sysEnd: 128,
-        diaStart: 92,
-        diaEnd: 82,
-        sdSys: 6,
-        sdDia: 4,
+        sysStart: 152,
+        sysEnd: 146,
+        diaStart: 96,
+        diaEnd: 92,
+        sdSys: 7,
+        sdDia: 5,
         poorSleepSysDelta: 3,
         poorSleepDiaDelta: 2,
         time: { hour: 8, minute: 15 },
       },
       weight: {
-        lbStart: 168,
-        lbEnd: 165,
+        lbStart: 155,
+        lbEnd: 153,
         follow: 0.22,
-        sd: 0.3,
+        sd: 0.28,
         workoutFactor: 0.28,
         time: { hour: 7, minute: 20 },
       },
@@ -3360,23 +3778,23 @@
         weight: "Smart Scale",
       },
       sleep: {
-        meanStart: 5.7,
-        meanEnd: 5.8,
-        sdHours: 0.75,
-        weekendDelta: 1.2,
-        minHours: 3.8,
-        maxHours: 8.8,
+        meanStart: 5.4,
+        meanEnd: 5.6,
+        sdHours: 0.7,
+        weekendDelta: 1.0,
+        minHours: 3.4,
+        maxHours: 8.4,
         wakeWeekday: { hour: 6, minute: 10 },
         wakeWeekend: { hour: 9, minute: 5 },
         wakeJitterMin: 22,
         respirationBase: 17.8,
       },
       rhr: {
-        baseStart: 69,
-        baseEnd: 71,
-        sd: 2.2,
-        poorSleepBpmDelta: 4.2,
-        prevLoadBpmPerHour: 1.4,
+        baseStart: 74,
+        baseEnd: 76,
+        sd: 1.7,
+        poorSleepBpmDelta: 5.2,
+        prevLoadBpmPerHour: 1.6,
         time: { hour: 7, minute: 55 },
       },
       nutrition: {
@@ -3404,10 +3822,10 @@
         time: { hour: 20, minute: 5 },
       },
       bp: {
-        sysStart: 132,
-        sysEnd: 134,
-        diaStart: 86,
-        diaEnd: 88,
+        sysStart: 140,
+        sysEnd: 144,
+        diaStart: 90,
+        diaEnd: 92,
         sdSys: 7,
         sdDia: 5,
         poorSleepSysDelta: 4,
@@ -3475,6 +3893,15 @@
     }
   }
 
+  function safeStorageRemove(key) {
+    try {
+      window.localStorage.removeItem(key);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   function readStoredJson(key) {
     const raw = safeStorageGet(key);
     if (typeof raw !== "string" || !raw) return null;
@@ -3512,6 +3939,7 @@
     const stored = readStoredJson(sampleStateKey(profileId));
     if (!isPlainObject(stored)) return null;
     if (stored.v !== STORAGE_VERSION) return null;
+    if (stored.sampleVersion !== SAMPLE_PROFILE_VERSION) return null;
     if (stored.profileId !== profileId) return null;
     if (!isDayKey(stored.startDayKey)) return null;
     if (!isDayKey(stored.lastDayKey)) return null;
@@ -3535,6 +3963,7 @@
       const payload = buildSampleProfilePayload(profileId, tz, { startDayKey, endDayKey: todayKey });
       putSampleState(profileId, {
         v: STORAGE_VERSION,
+        sampleVersion: SAMPLE_PROFILE_VERSION,
         profileId,
         tz,
         startDayKey,
@@ -3573,6 +4002,10 @@
     return `${STORAGE_KEYS.insightsPrefix}${profileId}:${dayKey}`;
   }
 
+  function clearCachedInsights(profileId, dayKey) {
+    return safeStorageRemove(insightsCacheKey(profileId, dayKey));
+  }
+
   function getCachedInsights(profileId, dayKey) {
     const stored = readStoredJson(insightsCacheKey(profileId, dayKey));
     if (!isPlainObject(stored)) return null;
@@ -3594,7 +4027,10 @@
     });
   }
 
+  let activeInsightsViewKey = null;
   const insightRequestInFlight = new Map();
+  const insightRequestSeq = new Map();
+  const insightRequestControllers = new Map();
 
   function hashSeed(str) {
     let h = 2166136261;
@@ -3755,6 +4191,9 @@
 
     const endDayKey =
       isDayKey(opts.endDayKey) ? opts.endDayKey : formatDayKey(new Date(), tz);
+    const stressSpikeDayKey = addDaysToKey(endDayKey, -1);
+    const wantsStressSpike =
+      profileId === "protein-paul" || profileId === "hypertension-holly" || profileId === "chronic-chloe";
     const warmupDays = CONFIG.baselineLookbackDays;
     const storyDays = SAMPLE_VISIBLE_DAYS;
     const startDayKey = isDayKey(opts.startDayKey)
@@ -3796,11 +4235,14 @@
       const sleepMean =
         lerp(profile.sleep.meanStart, profile.sleep.meanEnd, storyT) +
         (isWeekend ? profile.sleep.weekendDelta : 0);
-      const sleepHours = clamp(
+      let sleepHours = clamp(
         sleepMean + randNormal(rng) * profile.sleep.sdHours,
         profile.sleep.minHours,
         profile.sleep.maxHours
       );
+      if (wantsStressSpike && dayKey === stressSpikeDayKey) {
+        sleepHours = clamp(Math.min(sleepHours - 1.4, 5.6), profile.sleep.minHours, profile.sleep.maxHours);
+      }
 
       const sleepStart = new Date(wake.getTime() - sleepHours * 60 * 60 * 1000);
       const respiration = clamp(
@@ -4057,6 +4499,7 @@
 
   dom.loadSampleBtn.addEventListener("click", () => void loadSample(activeSampleProfile));
   dom.analyzeBtn.addEventListener("click", () => analyzeFromText(dom.jsonInput.value));
+  dom.regenerateBtn?.addEventListener("click", () => void regenerateAiInsightsForCurrentDay());
   dom.clearBtn.addEventListener("click", () => clearAll());
   dom.fileInput.addEventListener("change", async () => {
     const file = dom.fileInput.files?.[0];
