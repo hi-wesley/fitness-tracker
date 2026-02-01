@@ -137,6 +137,10 @@ app.post("/insights", async (req, res) => {
     "  - 'When exercise load rises, sleep duration/quality tends to change.'",
     "- For the STRESS card, use `stress_score` (0–100; higher = better recovery/lower stress) and `stress_label` if present.",
     "",
+    "Brevity rules:",
+    "- OVERALL: no strict limit, but stay readable.",
+    "- sleep/stress/exercise/nutrition/bp/weight: MAX 2 sentences each. No long lists. No day-by-day dumps.",
+    "",
     `Profile: ${profileName || profileId} (${profileId})`,
     `As-of dayKey: ${dayKey}`,
     `Time zone: ${timeZone}`,
@@ -161,7 +165,7 @@ app.post("/insights", async (req, res) => {
     const insightResponse = await client.responses.create({
       model: OPENAI_MODEL,
       input: promptText,
-      max_output_tokens: 2000,
+      max_output_tokens: 1200,
     });
 
     const insightText = typeof insightResponse.output_text === "string" ? insightResponse.output_text : "";
