@@ -1,6 +1,10 @@
 # Netlify -> Hetzner backend proxy
 # Put proxy rules ABOVE any SPA fallback rules.
 
+[build]
+  publish = "dist"
+  command = "mkdir -p dist && cp index.html app.js styles.css dist/ && mkdir -p dist/modules && cp -R modules/. dist/modules/"
+
 [[redirects]]
   from = "/health"
   to = "http://5.78.180.72:8787/health"
@@ -9,14 +13,14 @@
 
 [[redirects]]
   from = "/insights"
-  to = "http://5.78.180.72:8787/insights"
+  to = "/.netlify/functions/insights"
   status = 200
   force = true
 
 # If the frontend ever calls /insights/anything (subpaths), proxy those too:
 [[redirects]]
   from = "/insights/*"
-  to = "http://5.78.180.72:8787/insights/:splat"
+  to = "/.netlify/functions/insights"
   status = 200
   force = true
 

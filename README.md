@@ -10,14 +10,23 @@ Unifies sleep, nutrition, activity, and vitals into a single dashboard, with an 
 ## Deploy
 ### Netlify (frontend)
 - The Netlify config is in `netlify.toml`.
-- It builds a minimal `dist/` folder (so only frontend assets are published) and proxies:
-  - `/insights` → `http://5.78.180.72:8787/insights`
-  - `/health` → `http://5.78.180.72:8787/health`
+- It builds a minimal `dist/` folder (so only frontend assets are published).
+- It proxies `/health` directly to Hetzner, and proxies `/insights` through a Netlify Function so the proxy secret is never exposed client-side.
+- Netlify env vars:
+  - `MHP_PROXY_SECRET` (must match Hetzner `INSIGHTS_PROXY_SECRET`)
+  - `MHP_BACKEND_ORIGIN` (optional; defaults to `http://5.78.180.72:8787`)
 - Live URL: `https://my-healthness-pal.netlify.app/`
 
 ### Hetzner (backend)
 - Run Node 18+ in `backend/`.
-- Required env vars: `OPENAI_API_KEY`, optional: `OPENAI_MODEL`, `PORT`, `CORS_ORIGIN`.
+- Required env vars: `OPENAI_API_KEY`.
+- Recommended (prod) env vars:
+  - `NODE_ENV=production`
+  - `INSIGHTS_PROXY_SECRET` (required when `NODE_ENV=production`; locks down `/insights`)
+- Optional env vars:
+  - `OPENAI_MODEL`, `PORT`, `CORS_ORIGIN`
+  - Rate limiting: `INSIGHTS_RATE_ANY_PER_MIN`, `INSIGHTS_RATE_POST_PER_MIN`, `INSIGHTS_RATE_GET_PER_MIN`
+  - Debug: `INSIGHTS_INCLUDE_RAW=1` (only honored when not in production)
 - Live URL: `http://5.78.180.72:8787`
 
 ## What’s included
@@ -43,6 +52,7 @@ Then open the printed URL.
 ### Backend (AI insights)
 - `cd backend`
 - Add your OpenAI key to `backend/.env` (`OPENAI_API_KEY=...`)
+- If you want to test the auth/proxy flow locally, you can also set `INSIGHTS_PROXY_SECRET=...`
 - `npm install`
 - `npm run dev`
 - Open: `http://localhost:8787` (backend serves the static frontend)
