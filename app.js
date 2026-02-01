@@ -107,7 +107,7 @@
   }
 
   const DEFAULT_TZ = detectBrowserTimeZone() ?? FALLBACK_TZ;
-  const INSIGHTS_ANALYSIS_VERSION = 2;
+  const INSIGHTS_ANALYSIS_VERSION = 3;
 
   let themeColors = null;
 
@@ -2515,7 +2515,15 @@
 
       const profile = SAMPLE_PROFILES[profileId] ?? null;
       const profileName = profile?.name ?? (typeof model?.userName === "string" ? model.userName : profileId);
-      const days = Array.isArray(model?.days) ? model.days.slice(-30) : [];
+      const daysRaw = Array.isArray(model?.days) ? model.days.slice(-30) : [];
+      const dayByKey = new Map(daysRaw.map((d) => [d.dayKey, d]));
+      const days = daysRaw.map((d) => {
+        const prevDayKey = addDaysToKey(d.dayKey, -1);
+        const detail = computeStressForDay(dayByKey, prevDayKey);
+        const stress_score = isFiniteNumber(detail?.score) ? detail.score : null;
+        const stress_label = typeof detail?.label === "string" ? detail.label : null;
+        return { ...d, stress_score, stress_label };
+      });
       const timeZone =
         typeof model?.timeZone === "string" && model.timeZone.trim()
           ? model.timeZone.trim()

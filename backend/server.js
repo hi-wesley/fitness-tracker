@@ -135,6 +135,7 @@ app.post("/insights", async (req, res) => {
     "  - 'On days after shorter sleep, your afternoon calories tend to be higher.'",
     "  - 'Higher physiological stress days often line up with higher resting heart rate the next day.'",
     "  - 'When exercise load rises, sleep duration/quality tends to change.'",
+    "- For the STRESS card, use `stress_score` (0–100; higher = better recovery/lower stress) and `stress_label` if present.",
     "",
     `Profile: ${profileName || profileId} (${profileId})`,
     `As-of dayKey: ${dayKey}`,
