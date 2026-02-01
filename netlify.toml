@@ -1,0 +1,28 @@
+# Netlify -> Hetzner backend proxy
+# Put proxy rules ABOVE any SPA fallback rules.
+
+[[redirects]]
+  from = "/health"
+  to = "http://5.78.180.72:8787/health"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/insights"
+  to = "http://5.78.180.72:8787/insights"
+  status = 200
+  force = true
+
+# If the frontend ever calls /insights/anything (subpaths), proxy those too:
+[[redirects]]
+  from = "/insights/*"
+  to = "http://5.78.180.72:8787/insights/:splat"
+  status = 200
+  force = true
+
+# (Optional) If this is a single-page app and you need SPA fallback:
+# Keep this LAST.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

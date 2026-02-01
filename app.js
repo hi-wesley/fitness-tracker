@@ -31,12 +31,6 @@
 
   const dom = {
     statusPill: document.getElementById("statusPill"),
-    fileInput: document.getElementById("fileInput"),
-    jsonInput: document.getElementById("jsonInput"),
-    loadSampleBtn: document.getElementById("loadSampleBtn"),
-    analyzeBtn: document.getElementById("analyzeBtn"),
-    regenerateBtn: document.getElementById("regenerateBtn"),
-    clearBtn: document.getElementById("clearBtn"),
     errors: document.getElementById("errors"),
     focusTitle: document.getElementById("focus-title"),
     focusRange: document.getElementById("focusRange"),
@@ -98,8 +92,21 @@
     ],
   };
 
-  const APP_TZ = "America/Los_Angeles";
-  const DEFAULT_TZ = APP_TZ;
+  const FALLBACK_TZ = "America/Los_Angeles";
+
+  function detectBrowserTimeZone() {
+    try {
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      if (typeof tz !== "string") return null;
+      const trimmed = tz.trim();
+      if (!trimmed) return null;
+      return validateTimeZone(trimmed) ? trimmed : null;
+    } catch {
+      return null;
+    }
+  }
+
+  const DEFAULT_TZ = detectBrowserTimeZone() ?? FALLBACK_TZ;
   const INSIGHTS_ANALYSIS_VERSION = 2;
 
   let themeColors = null;
@@ -2509,6 +2516,10 @@
       const profile = SAMPLE_PROFILES[profileId] ?? null;
       const profileName = profile?.name ?? (typeof model?.userName === "string" ? model.userName : profileId);
       const days = Array.isArray(model?.days) ? model.days.slice(-60) : [];
+      const timeZone =
+        typeof model?.timeZone === "string" && model.timeZone.trim()
+          ? model.timeZone.trim()
+          : DEFAULT_TZ;
 
       const res = await fetch("/insights", {
         method: "POST",
@@ -2518,7 +2529,7 @@
           profileId,
           profileName,
           dayKey,
-          timeZone: APP_TZ,
+          timeZone,
           days,
         }),
       });
@@ -2590,7 +2601,7 @@
       return;
     }
 
-    const todayKey = getTodayKey();
+    const todayKey = getTodayKey(model.timeZone);
     const profileId = typeof model.userId === "string" && model.userId ? model.userId : null;
     const isSample = Boolean(profileId && profileId in SAMPLE_PROFILES);
     if (isSample && profileId) activeInsightsViewKey = `${profileId}:${todayKey}`;
@@ -2671,7 +2682,7 @@
         : null;
     if (!profileId) return;
 
-    const todayKey = getTodayKey();
+    const todayKey = getTodayKey(currentModel.timeZone);
     activeInsightsViewKey = `${profileId}:${todayKey}`;
     clearCachedInsights(profileId, todayKey);
     showInsightsGenerating(todayKey);
@@ -4022,8 +4033,8 @@
     return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
   }
 
-  function getTodayKey() {
-    return formatDayKey(new Date(), APP_TZ);
+  function getTodayKey(timeZone = DEFAULT_TZ) {
+    return formatDayKey(new Date(), timeZone);
   }
 
   const SAMPLE_VISIBLE_DAYS = 35;
@@ -4052,8 +4063,8 @@
   }
 
   function getOrCreateSamplePayload(profileId) {
-    const todayKey = getTodayKey();
-    const tz = APP_TZ;
+    const tz = DEFAULT_TZ;
+    const todayKey = getTodayKey(tz);
     const existing = getSampleState(profileId);
 
     if (!existing) {
@@ -4523,9 +4534,7 @@
     safeStorageSet(STORAGE_KEYS.activeProfile, activeSampleProfile);
     updateProfileButtonsUI();
     const payload = getOrCreateSamplePayload(activeSampleProfile);
-    const text = JSON.stringify(payload, null, 2);
-    dom.jsonInput.value = text;
-    analyzeFromText(text);
+    analyzeFromText(JSON.stringify(payload, null, 2));
   }
 
   function clearAll() {
@@ -4533,8 +4542,6 @@
     focusRanges = { ...FOCUS_RANGE_DEFAULTS };
     updateRangeToggleUI();
     setDashGreeting("there");
-    dom.jsonInput.value = "";
-    dom.fileInput.value = "";
     dom.errors.innerHTML = "";
     dom.focusRange.textContent = "—";
     dom.focus.sleepNow.textContent = "—";
@@ -4589,34 +4596,6 @@
     setStatus("Ready");
   }
 
-  function readFileAsText(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onerror = () => reject(new Error("File read error"));
-      reader.onload = () => resolve(String(reader.result || ""));
-      reader.readAsText(file);
-    });
-  }
-
-  dom.loadSampleBtn.addEventListener("click", () => void loadSample(activeSampleProfile));
-  dom.analyzeBtn.addEventListener("click", () => analyzeFromText(dom.jsonInput.value));
-  dom.regenerateBtn?.addEventListener("click", () => void regenerateAiInsightsForCurrentDay());
-  dom.clearBtn.addEventListener("click", () => clearAll());
-  dom.fileInput.addEventListener("change", async () => {
-    const file = dom.fileInput.files?.[0];
-    if (!file) return;
-    clearErrors();
-    setStatus("Reading file…");
-    try {
-      const text = await readFileAsText(file);
-      dom.jsonInput.value = text;
-      analyzeFromText(text);
-    } catch (err) {
-      setStatus("Read failed", "error");
-      showErrors([`Could not read file: ${String(err)}`]);
-    }
-  });
-
   document.addEventListener("click", (ev) => {
     const btn = ev.target?.closest?.("button[data-range-panel][data-range-days]");
     if (!btn) return;
@@ -4645,7 +4624,5 @@
   }
   updateProfileButtonsUI();
 
-  if (dom.jsonInput.value.trim() === "") {
-    void loadSample(activeSampleProfile);
-  }
+  void loadSample(activeSampleProfile);
 })();
