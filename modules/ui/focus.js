@@ -5,6 +5,7 @@ export function createFocusRenderer(ctx) {
     focusRanges,
     CONFIG,
     METRICS,
+    clamp,
     addDaysToKey,
     windowDays,
     formatDayLong,

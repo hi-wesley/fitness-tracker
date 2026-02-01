@@ -2640,6 +2640,7 @@ import {
     focusRanges,
     CONFIG,
     METRICS,
+    clamp,
     addDaysToKey,
     windowDays,
     formatDayLong,
