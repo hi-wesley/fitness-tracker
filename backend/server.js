@@ -190,7 +190,7 @@ app.post("/insights", async (req, res) => {
     const insightResponse = await client.responses.create({
       model: OPENAI_MODEL,
       input: promptText,
-      max_output_tokens: 10000,
+      max_output_tokens: 2000,
     });
 
     const insightText = typeof insightResponse.output_text === "string" ? insightResponse.output_text : "";
