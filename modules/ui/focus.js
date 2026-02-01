@@ -21,7 +21,6 @@ export function createFocusRenderer(ctx) {
     buildSleepDetailsHtml,
     buildSleepTooltipHtml,
     buildExerciseTooltipHtml,
-    buildNutritionTooltipHtml,
     formatMacroTile,
     formatWorkoutMinutes,
     topExerciseActivities,

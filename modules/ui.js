@@ -2656,7 +2656,6 @@ import {
     buildSleepDetailsHtml,
     buildSleepTooltipHtml,
     buildExerciseTooltipHtml,
-    buildNutritionTooltipHtml,
     formatMacroTile,
     formatWorkoutMinutes,
     topExerciseActivities,
